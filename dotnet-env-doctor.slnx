@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/dotnet-env-doctor/">
+    <Project Path="src/dotnet-env-doctor/DotnetEnvDoctor.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/dotnet-env-doctor.Tests/">
+    <Project Path="tests/dotnet-env-doctor.Tests/DotnetEnvDoctor.Tests.csproj" />
+  </Folder>
+</Solution>
