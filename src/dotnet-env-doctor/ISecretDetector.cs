@@ -51,9 +51,153 @@ public interface ISecretDetector
 /// </summary>
 public sealed class SecretDetector : ISecretDetector
 {
+    private readonly SecretDetectorOptions _options;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SecretDetector"/> class with default options.
+    /// </summary>
+    public SecretDetector()
+        : this(new SecretDetectorOptions())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SecretDetector"/> class.
+    /// </summary>
+    /// <param name="options">Options controlling detection behavior.</param>
+    public SecretDetector(SecretDetectorOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _options = options;
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<SecretIssue> Scan(IConfigSchema schema, IReadOnlyList<ConfigSnapshot> snapshots)
     {
-        throw new NotImplementedException();
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(snapshots);
+
+        // (1) Merge snapshots in override order: first = lowest priority, later wins.
+        var effective = new Dictionary<string, (string? Value, string SourceName)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var snapshot in snapshots)
+        {
+            foreach (var kvp in snapshot.Values)
+            {
+                effective[kvp.Key] = (kvp.Value, snapshot.Name);
+            }
+        }
+
+        var issues = new List<SecretIssue>();
+        var seen = new HashSet<(string Key, SecretIssueKind Kind, string? Source)>();
+
+        // Build a set of secret-kind keys for quick lookup.
+        var secretKindKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var spec in schema.Keys)
+        {
+            if (spec.Kind is ConfigValueKind.Secret or ConfigValueKind.ConnectionString)
+            {
+                secretKindKeys.Add(spec.Key);
+            }
+        }
+
+        // (2) For every ConfigKeySpec with Kind Secret or ConnectionString:
+        foreach (var spec in schema.Keys)
+        {
+            if (spec.Kind is not (ConfigValueKind.Secret or ConfigValueKind.ConnectionString))
+            {
+                continue;
+            }
+
+            if (!effective.TryGetValue(spec.Key, out var entry) || string.IsNullOrWhiteSpace(entry.Value))
+            {
+                // Missing secret.
+                AddIssue(issues, seen, spec.Key, SecretIssueKind.MissingSecret, null, "Secret is not set in any source");
+            }
+            else if (SecretHeuristics.IsPlaceholder(entry.Value, _options.PlaceholderValues))
+            {
+                // Placeholder value.
+                AddIssue(issues, seen, spec.Key, SecretIssueKind.PlaceholderValue, entry.SourceName,
+                    $"Secret holds a placeholder value in source '{entry.SourceName}'");
+            }
+        }
+
+        // (3) For every snapshot whose Name matches any CommittedFilePatterns glob:
+        foreach (var snapshot in snapshots)
+        {
+            if (!SecretHeuristics.MatchesAnyPattern(snapshot.Name, _options.CommittedFilePatterns))
+            {
+                continue;
+            }
+
+            foreach (var kvp in snapshot.Values)
+            {
+                if (!secretKindKeys.Contains(kvp.Key))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(kvp.Value))
+                {
+                    continue;
+                }
+
+                if (SecretHeuristics.IsPlaceholder(kvp.Value, _options.PlaceholderValues))
+                {
+                    continue;
+                }
+
+                // Non-empty, non-placeholder secret in a committed file.
+                AddIssue(issues, seen, kvp.Key, SecretIssueKind.SecretInCommittedFile, snapshot.Name,
+                    $"Secret has a real value in committed file '{snapshot.Name}'");
+            }
+        }
+
+        // (4) Undeclared secret-like values.
+        if (_options.DetectUndeclaredSecretLike)
+        {
+            foreach (var kvp in effective)
+            {
+                if (secretKindKeys.Contains(kvp.Key))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(kvp.Value.Value))
+                {
+                    continue;
+                }
+
+                if (SecretHeuristics.LooksLikeSecret(kvp.Value.Value))
+                {
+                    AddIssue(issues, seen, kvp.Key, SecretIssueKind.UndeclaredSecretLike, kvp.Value.SourceName,
+                        "Value looks like a credential but the key is not declared as a secret");
+                }
+            }
+        }
+
+        // Order by Kind then Key (OrdinalIgnoreCase).
+        issues.Sort((a, b) =>
+        {
+            int kindCmp = a.Kind.CompareTo(b.Kind);
+            return kindCmp != 0
+                ? kindCmp
+                : string.Compare(a.Key, b.Key, StringComparison.OrdinalIgnoreCase);
+        });
+
+        return issues;
+    }
+
+    private static void AddIssue(
+        List<SecretIssue> issues,
+        HashSet<(string Key, SecretIssueKind Kind, string? Source)> seen,
+        string key,
+        SecretIssueKind kind,
+        string? source,
+        string message)
+    {
+        if (seen.Add((key, kind, source)))
+        {
+            issues.Add(new SecretIssue(key, kind, source, message));
+        }
     }
 }
