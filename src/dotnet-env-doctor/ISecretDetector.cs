@@ -22,15 +22,46 @@ public enum SecretIssueKind
 /// <summary>
 /// A secret-related issue.
 /// </summary>
-/// <param name="Key">Configuration key.</param>
-/// <param name="Kind">Kind of issue.</param>
-/// <param name="Source">Source in which the issue was observed, if any.</param>
-/// <param name="Message">Human-readable explanation. Never contains the secret value itself.</param>
-public sealed record SecretIssue(
-    string Key,
-    SecretIssueKind Kind,
-    string? Source,
-    string Message);
+public sealed record SecretIssue
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SecretIssue"/> record.
+    /// </summary>
+    /// <param name="Key">Configuration key.</param>
+    /// <param name="Kind">Kind of issue.</param>
+    /// <param name="Source">Source in which the issue was observed, if any.</param>
+    /// <param name="Message">Human-readable explanation. Never contains the secret value itself.</param>
+    /// <exception cref="ArgumentException"><paramref name="Key"/> or <paramref name="Message"/> is <c>null</c>, empty or white-space.</exception>
+    public SecretIssue(string Key, SecretIssueKind Kind, string? Source, string Message)
+    {
+        if (string.IsNullOrWhiteSpace(Key))
+        {
+            throw new ArgumentException("Issue key must not be null, empty or white-space.", nameof(Key));
+        }
+
+        if (string.IsNullOrWhiteSpace(Message))
+        {
+            throw new ArgumentException("Issue message must not be null, empty or white-space.", nameof(Message));
+        }
+
+        this.Key = Key;
+        this.Kind = Kind;
+        this.Source = Source;
+        this.Message = Message;
+    }
+
+    /// <summary>Gets the configuration key.</summary>
+    public string Key { get; init; }
+
+    /// <summary>Gets the kind of issue.</summary>
+    public SecretIssueKind Kind { get; init; }
+
+    /// <summary>Gets the source in which the issue was observed, if any.</summary>
+    public string? Source { get; init; }
+
+    /// <summary>Gets the human-readable explanation. Never contains the secret value itself.</summary>
+    public string Message { get; init; }
+}
 
 /// <summary>
 /// Detects missing, leaked and placeholder secrets across configuration sources.
@@ -43,6 +74,8 @@ public interface ISecretDetector
     /// <param name="schema">Schema declaring which keys are secrets.</param>
     /// <param name="snapshots">All snapshots, in override order (first = lowest priority).</param>
     /// <returns>Issues found. Values are never included in the output.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="schema"/> or <paramref name="snapshots"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentException">An element of <paramref name="snapshots"/> is <c>null</c>. The message contains its zero-based index.</exception>
     IReadOnlyList<SecretIssue> Scan(IConfigSchema schema, IReadOnlyList<ConfigSnapshot> snapshots);
 }
 
@@ -65,6 +98,9 @@ public sealed class SecretDetector : ISecretDetector
     /// Initializes a new instance of the <see cref="SecretDetector"/> class.
     /// </summary>
     /// <param name="options">Options controlling detection behavior.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A numeric option is outside its valid range.</exception>
+    /// <exception cref="ArgumentException">A list option contains a <c>null</c>, empty or white-space entry.</exception>
     public SecretDetector(SecretDetectorOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -77,6 +113,14 @@ public sealed class SecretDetector : ISecretDetector
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(snapshots);
+
+        for (var i = 0; i < snapshots.Count; i++)
+        {
+            if (snapshots[i] is null)
+            {
+                throw new ArgumentException($"snapshots[{i}] is null", nameof(snapshots));
+            }
+        }
 
         // (1) Merge snapshots in override order: first = lowest priority, later wins.
         var effective = new Dictionary<string, (string? Value, string SourceName)>(StringComparer.OrdinalIgnoreCase);
