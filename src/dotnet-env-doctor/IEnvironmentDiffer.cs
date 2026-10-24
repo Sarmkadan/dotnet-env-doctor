@@ -67,9 +67,9 @@ public sealed class EnvironmentDiffer : IEnvironmentDiffer
 {
     /// <summary>
     /// Placeholder written in place of values of keys the schema marks as <see cref="ConfigValueKind.Secret"/>
-    /// or <see cref="ConfigValueKind.ConnectionString"/>.
+    /// or <see cref="ConfigValueKind.ConnectionString"/>. Alias of <see cref="SecretRedactor.Mask"/>.
     /// </summary>
-    public const string RedactedValue = "***";
+    public const string RedactedValue = SecretRedactor.Mask;
 
     /// <inheritdoc />
     public DiffResult Diff(ConfigSnapshot left, ConfigSnapshot right, IConfigSchema? schema = null)
@@ -106,14 +106,11 @@ public sealed class EnvironmentDiffer : IEnvironmentDiffer
                 entry = new DiffEntry(r.Key, DiffKind.OnlyInRight, null, r.Value);
             }
 
-            if (schema is not null && schema.TryGetSpec(key, out var spec) && spec is { Kind: ConfigValueKind.Secret or ConfigValueKind.ConnectionString })
+            entry = entry with
             {
-                entry = entry with
-                {
-                    LeftValue = entry.LeftValue is null ? null : RedactedValue,
-                    RightValue = entry.RightValue is null ? null : RedactedValue,
-                };
-            }
+                LeftValue = SecretRedactor.RedactIfSecret(schema, entry.Key, entry.LeftValue),
+                RightValue = SecretRedactor.RedactIfSecret(schema, entry.Key, entry.RightValue),
+            };
 
             entries.Add(entry);
         }
