@@ -1,80 +1,82 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace DotnetEnvDoctor;
 
 /// <summary>
-/// Heuristics for detecting placeholder values and credential-like strings.
+/// Pure heuristics used by <see cref="SecretDetector"/> to recognize placeholders,
+/// credential-like values and committed-file names.
 /// </summary>
 public static class SecretHeuristics
 {
-    private static readonly Regex KnownTokenPrefixPattern = new(
-        @"^(sk-|pk-|ghp_|gho_|ghu_|ghs_|ghr_|glpat-|AKIA[A-Z0-9]|eyJ[A-Za-z0-9]|xox[bpsa]-|Bearer\s)",
-        RegexOptions.Compiled);
+    private static readonly Regex[] TemplatePlaceholderPatterns =
+    [
+        new(@"^<.*>$", RegexOptions.Compiled | RegexOptions.CultureInvariant),
+        new(@"^\$\{.*\}$", RegexOptions.Compiled | RegexOptions.CultureInvariant),
+        new(@"^%.*%$", RegexOptions.Compiled | RegexOptions.CultureInvariant),
+    ];
 
     /// <summary>
-    /// Returns <c>true</c> when <paramref name="value"/> matches one of the known
-    /// placeholder strings in <paramref name="placeholderValues"/> (case-insensitive).
+    /// Computes the Shannon entropy of <paramref name="value"/> over its character frequencies.
     /// </summary>
-    /// <param name="value">The configuration value to check.</param>
-    /// <param name="placeholderValues">Known placeholder strings.</param>
-    /// <returns><c>true</c> when the value is a placeholder.</returns>
-    public static bool IsPlaceholder(string value, IEnumerable<string> placeholderValues)
+    /// <param name="value">The string to measure.</param>
+    /// <returns>Bits per character; <c>0</c> for an empty string, about <c>3.0</c> for eight distinct equally frequent characters.</returns>
+    public static double ShannonEntropy(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        ArgumentNullException.ThrowIfNull(placeholderValues);
 
-        foreach (string placeholder in placeholderValues)
+        if (value.Length == 0)
         {
-            if (string.Equals(value, placeholder, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
+            return 0;
         }
 
-        return false;
+        var frequencies = new Dictionary<char, int>();
+        foreach (char c in value)
+        {
+            frequencies.TryGetValue(c, out int count);
+            frequencies[c] = count + 1;
+        }
+
+        double length = value.Length;
+        double entropy = 0;
+        foreach (int count in frequencies.Values)
+        {
+            double probability = count / length;
+            entropy -= probability * Math.Log2(probability);
+        }
+
+        return entropy;
     }
 
     /// <summary>
-    /// Returns <c>true</c> when <paramref name="value"/> looks like a credential
-    /// based on entropy analysis or known token prefixes.
+    /// Returns <c>true</c> when <paramref name="value"/> is null, empty or whitespace, equals one of
+    /// <paramref name="placeholders"/> (case-insensitive, after trimming), or has a template form
+    /// such as <c>&lt;value&gt;</c>, <c>${VALUE}</c> or <c>%VALUE%</c>.
     /// </summary>
     /// <param name="value">The configuration value to check.</param>
-    /// <returns><c>true</c> when the value appears to be a secret.</returns>
-    public static bool LooksLikeSecret(string value)
+    /// <param name="placeholders">Known placeholder strings.</param>
+    /// <returns><c>true</c> when the value is a placeholder or carries no value at all.</returns>
+    public static bool IsPlaceholder(string? value, IEnumerable<string> placeholders)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(placeholders);
 
-        if (string.IsNullOrWhiteSpace(value) || value.Length < 8)
-        {
-            return false;
-        }
-
-        // Known token prefixes.
-        if (KnownTokenPrefixPattern.IsMatch(value))
+        if (string.IsNullOrWhiteSpace(value))
         {
             return true;
         }
 
-        // High Shannon entropy suggests a random token.
-        double entropy = ShannonEntropy(value);
-        return entropy >= 3.5 && value.Length >= 16;
-    }
-
-    /// <summary>
-    /// Checks whether a snapshot name matches any of the given glob patterns.
-    /// Supports <c>*</c> as a wildcard for any sequence of characters (simple file-name glob).
-    /// </summary>
-    /// <param name="snapshotName">The snapshot name to test.</param>
-    /// <param name="patterns">Glob patterns to match against.</param>
-    /// <returns><c>true</c> when at least one pattern matches.</returns>
-    public static bool MatchesAnyPattern(string snapshotName, IEnumerable<string> patterns)
-    {
-        ArgumentNullException.ThrowIfNull(snapshotName);
-        ArgumentNullException.ThrowIfNull(patterns);
-
-        foreach (string pattern in patterns)
+        string trimmed = value.Trim();
+        foreach (string placeholder in placeholders)
         {
-            if (GlobMatch(snapshotName, pattern))
+            if (string.Equals(trimmed, placeholder, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        foreach (Regex template in TemplatePlaceholderPatterns)
+        {
+            if (template.IsMatch(trimmed))
             {
                 return true;
             }
@@ -83,39 +85,96 @@ public static class SecretHeuristics
         return false;
     }
 
-    private static bool GlobMatch(string input, string pattern)
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="value"/> starts with one of <paramref name="prefixes"/>
+    /// using ordinal, case-sensitive comparison. Empty prefixes are ignored.
+    /// </summary>
+    /// <param name="value">The value to check.</param>
+    /// <param name="prefixes">Known token prefixes such as <c>ghp_</c> or <c>AKIA</c>.</param>
+    /// <returns><c>true</c> when a non-empty prefix matches.</returns>
+    public static bool HasKnownTokenPrefix(string value, IEnumerable<string> prefixes)
     {
-        // Convert a simple glob pattern to a regex.
-        string escaped = Regex.Escape(pattern).Replace(@"\*", ".*");
-        return Regex.IsMatch(input, "^" + escaped + "$", RegexOptions.IgnoreCase);
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(prefixes);
+
+        foreach (string prefix in prefixes)
+        {
+            if (prefix.Length > 0 && value.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    private static double ShannonEntropy(string s)
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="value"/> looks like a credential: it is non-null, contains no
+    /// whitespace, is at least <see cref="SecretDetectorOptions.MinSecretLikeLength"/> characters long, and either
+    /// starts with a known token prefix or has Shannon entropy at or above
+    /// <see cref="SecretDetectorOptions.EntropyThreshold"/>.
+    /// </summary>
+    /// <remarks>
+    /// Values that parse as an absolute URI, a boolean or a number are never secret-like, whatever their entropy.
+    /// </remarks>
+    /// <param name="value">The configuration value to check.</param>
+    /// <param name="options">Options supplying the length, entropy and prefix thresholds.</param>
+    /// <returns><c>true</c> when the value appears to be a credential.</returns>
+    public static bool LooksLikeSecret(string? value, SecretDetectorOptions options)
     {
-        var freq = new Dictionary<char, int>(s.Length);
-        foreach (char c in s)
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (value is null || value.Length < options.MinSecretLikeLength || value.Any(char.IsWhiteSpace))
         {
-            if (freq.TryGetValue(c, out int count))
+            return false;
+        }
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out _)
+            || bool.TryParse(value, out _)
+            || double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+        {
+            return false;
+        }
+
+        return HasKnownTokenPrefix(value, options.KnownTokenPrefixes)
+            || ShannonEntropy(value) >= options.EntropyThreshold;
+    }
+
+    /// <summary>
+    /// Matches <paramref name="name"/> against a glob <paramref name="pattern"/> case-insensitively.
+    /// <c>*</c> matches any sequence of characters and <c>?</c> matches exactly one character; the whole name must match.
+    /// </summary>
+    /// <param name="name">The name to test, such as a snapshot or file name.</param>
+    /// <param name="pattern">The glob pattern.</param>
+    /// <returns><c>true</c> when the whole name matches the pattern.</returns>
+    public static bool MatchesGlob(string name, string pattern)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(pattern);
+
+        string regex = Regex.Escape(pattern).Replace(@"\*", ".*").Replace(@"\?", ".");
+        return Regex.IsMatch(name, @"\A" + regex + @"\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="name"/> matches any of the glob <paramref name="patterns"/>.
+    /// </summary>
+    /// <param name="name">The name to test.</param>
+    /// <param name="patterns">Glob patterns, see <see cref="MatchesGlob"/>.</param>
+    /// <returns><c>true</c> when at least one pattern matches.</returns>
+    public static bool MatchesAnyPattern(string name, IEnumerable<string> patterns)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(patterns);
+
+        foreach (string pattern in patterns)
+        {
+            if (MatchesGlob(name, pattern))
             {
-                freq[c] = count + 1;
-            }
-            else
-            {
-                freq[c] = 1;
+                return true;
             }
         }
 
-        double entropy = 0.0;
-        double len = s.Length;
-        foreach (int count in freq.Values)
-        {
-            double p = count / len;
-            if (p > 0)
-            {
-                entropy -= p * Math.Log2(p);
-            }
-        }
-
-        return entropy;
+        return false;
     }
 }

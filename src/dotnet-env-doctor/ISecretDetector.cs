@@ -168,7 +168,7 @@ public sealed class SecretDetector : ISecretDetector
                     continue;
                 }
 
-                if (SecretHeuristics.LooksLikeSecret(kvp.Value.Value))
+                if (SecretHeuristics.LooksLikeSecret(kvp.Value.Value, _options))
                 {
                     AddIssue(issues, seen, kvp.Key, SecretIssueKind.UndeclaredSecretLike, kvp.Value.SourceName,
                         "Value looks like a credential but the key is not declared as a secret");
