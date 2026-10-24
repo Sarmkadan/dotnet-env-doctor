@@ -83,6 +83,80 @@ public sealed class ConfigValidator : IConfigValidator
     /// <inheritdoc />
     public ValidationResult Validate(IConfigSchema schema, ConfigSnapshot snapshot, ValidationOptions? options = null)
     {
-        throw new NotImplementedException();
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        options ??= new ValidationOptions();
+
+        // Case-insensitive view of the snapshot, matching Microsoft.Extensions.Configuration key semantics.
+        // On a case-only collision the first key encountered wins.
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in snapshot.Values)
+        {
+            values.TryAdd(kvp.Key, kvp.Value);
+        }
+
+        var findings = new List<Finding>();
+
+        foreach (var spec in schema.Keys)
+        {
+            values.TryGetValue(spec.Key, out string? value);
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                if (spec.Required)
+                {
+                    findings.Add(new Finding(
+                        spec.Key,
+                        Severity.Error,
+                        FindingCodes.MissingRequired,
+                        "Required key is missing or empty",
+                        snapshot.Name));
+                }
+
+                continue;
+            }
+
+            // Never include the value itself in the message: it may be a secret.
+            if (!ValueKindChecker.IsValid(spec.Kind, value, out string? reason))
+            {
+                findings.Add(new Finding(
+                    spec.Key,
+                    Severity.Error,
+                    FindingCodes.KindMismatch,
+                    $"Value does not match kind {spec.Kind}: {reason}",
+                    snapshot.Name));
+            }
+
+            // ED003 pattern check (FindingCodes.PatternMismatch) is handled by a separate class.
+        }
+
+        if (options.ReportUndeclaredKeys)
+        {
+            foreach (var key in values.Keys)
+            {
+                if (!schema.TryGetSpec(key, out _))
+                {
+                    findings.Add(new Finding(
+                        key,
+                        Severity.Warning,
+                        FindingCodes.UndeclaredKey,
+                        "Key is not declared in the schema",
+                        snapshot.Name));
+                }
+            }
+        }
+
+        IEnumerable<Finding> result = findings;
+        if (options.TreatWarningsAsErrors)
+        {
+            result = result.Select(f => f.Severity == Severity.Warning ? f with { Severity = Severity.Error } : f);
+        }
+
+        var ordered = result
+            .OrderByDescending(f => f.Severity)
+            .ThenBy(f => f.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new ValidationResult(ordered);
     }
 }

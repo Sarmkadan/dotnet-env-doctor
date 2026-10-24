@@ -73,6 +73,17 @@ dotnet add package DotnetEnvDoctor
 | `IEnvironmentDiffer` / `DiffResult` | Diffs two snapshots with secret redaction |
 | `ISecretDetector` / `SecretIssue` | Finds missing, placeholder and leaked secrets |
 
+## Finding codes
+
+Validation findings carry a stable code (`FindingCodes`) that will not change once published.
+
+| Code | Severity | Meaning |
+|------|----------|---------|
+| `ED001` | Error | A key declared as required is missing or has an empty value |
+| `ED002` | Error | A value does not match the kind declared for its key (e.g. `Integer`, `Boolean`, `Uri`) |
+| `ED003` | Error | A value does not match the regular expression declared for its key |
+| `ED004` | Warning | A key is present in the configuration but not declared in the schema (promoted to Error with `TreatWarningsAsErrors`) |
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
