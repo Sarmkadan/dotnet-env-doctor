@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Globalization;
 using System.Text.Json;
 
@@ -140,14 +141,26 @@ public sealed class JsonFileConfigSource : IConfigSource
 public sealed class EnvironmentConfigSource : IConfigSource
 {
     private readonly string? _prefix;
+    private readonly Func<IDictionary> _variablesProvider;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EnvironmentConfigSource"/> class.
     /// </summary>
     /// <param name="prefix">Optional prefix to filter and strip from variable names (e.g. <c>MYAPP_</c>).</param>
     public EnvironmentConfigSource(string? prefix = null)
+        : this(prefix, Environment.GetEnvironmentVariables)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="EnvironmentConfigSource"/> class with a custom variable provider.
+    /// </summary>
+    /// <param name="prefix">Optional prefix to filter and strip from variable names.</param>
+    /// <param name="variablesProvider">Supplies the environment variables to read (used by tests).</param>
+    internal EnvironmentConfigSource(string? prefix, Func<IDictionary> variablesProvider)
     {
         _prefix = prefix;
+        _variablesProvider = variablesProvider ?? throw new ArgumentNullException(nameof(variablesProvider));
     }
 
     /// <inheritdoc />
@@ -156,6 +169,37 @@ public sealed class EnvironmentConfigSource : IConfigSource
     /// <inheritdoc />
     public Task<ConfigSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in _variablesProvider())
+        {
+            if (entry.Key is not string name)
+            {
+                continue;
+            }
+
+            if (_prefix is not null)
+            {
+                if (!name.StartsWith(_prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                name = name[_prefix.Length..];
+            }
+
+            // Same mapping as Microsoft.Extensions.Configuration.EnvironmentVariables: "A__B" -> "A:B".
+            name = name.Replace("__", ":", StringComparison.Ordinal);
+            if (name.Length == 0)
+            {
+                continue;
+            }
+
+            // On a case-insensitive collision the first variable encountered wins.
+            values.TryAdd(name, entry.Value?.ToString());
+        }
+
+        return Task.FromResult(new ConfigSnapshot(Name, values));
     }
 }
