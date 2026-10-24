@@ -80,6 +80,8 @@ public sealed class ValidationOptions
 /// </summary>
 public sealed class ConfigValidator : IConfigValidator
 {
+    private readonly RegexPatternRule _patternRule = new();
+
     /// <inheritdoc />
     public ValidationResult Validate(IConfigSchema schema, ConfigSnapshot snapshot, ValidationOptions? options = null)
     {
@@ -126,8 +128,10 @@ public sealed class ConfigValidator : IConfigValidator
                     $"Value does not match kind {spec.Kind}: {reason}",
                     snapshot.Name));
             }
-
-            // ED003 pattern check (FindingCodes.PatternMismatch) is handled by a separate class.
+            else if (_patternRule.Evaluate(spec, value, snapshot.Name) is { } patternFinding)
+            {
+                findings.Add(patternFinding);
+            }
         }
 
         if (options.ReportUndeclaredKeys)

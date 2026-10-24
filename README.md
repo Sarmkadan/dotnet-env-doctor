@@ -83,6 +83,7 @@ Validation findings carry a stable code (`FindingCodes`) that will not change on
 | `ED002` | Error | A value does not match the kind declared for its key (e.g. `Integer`, `Boolean`, `Uri`) |
 | `ED003` | Error | A value does not match the regular expression declared for its key |
 | `ED004` | Warning | A key is present in the configuration but not declared in the schema (promoted to Error with `TreatWarningsAsErrors`) |
+| `ED005` | Error | A key's declared pattern is not a valid regular expression, or matching the value exceeded the timeout |
 
 ## Contributing
 

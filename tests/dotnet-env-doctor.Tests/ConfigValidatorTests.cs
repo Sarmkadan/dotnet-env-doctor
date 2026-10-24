@@ -159,4 +159,38 @@ public sealed class ConfigValidatorTests
         Assert.Empty(result.Findings);
         Assert.True(result.IsValid);
     }
+
+    [Fact]
+    public void Validate_PatternMismatch_ReturnsErrorED003WithoutValue()
+    {
+        var schema = Schema(new ConfigKeySpec("Region:Code", Pattern: "^[a-z]{2}$"));
+
+        var result = new ConfigValidator().Validate(schema, Snapshot(("Region:Code", "SECRET-XYZ")));
+
+        var finding = Assert.Single(result.Findings);
+        Assert.Equal(FindingCodes.PatternMismatch, finding.Code);
+        Assert.DoesNotContain("SECRET-XYZ", finding.Message);
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_KindMismatchWithPattern_ReturnsOnlyED002()
+    {
+        var schema = Schema(new ConfigKeySpec("Smtp:Port", ConfigValueKind.Integer, Pattern: "^[0-9]+$"));
+
+        var result = new ConfigValidator().Validate(schema, Snapshot(("Smtp:Port", "abc")));
+
+        Assert.Equal(FindingCodes.KindMismatch, Assert.Single(result.Findings).Code);
+    }
+
+    [Fact]
+    public void Validate_InvalidPattern_ReturnsErrorED005()
+    {
+        var schema = Schema(new ConfigKeySpec("Api:Key", Pattern: "[unclosed"));
+
+        var result = new ConfigValidator().Validate(schema, Snapshot(("Api:Key", "value")));
+
+        Assert.Equal(FindingCodes.InvalidPattern, Assert.Single(result.Findings).Code);
+        Assert.False(result.IsValid);
+    }
 }

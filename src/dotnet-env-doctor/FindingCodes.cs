@@ -16,4 +16,7 @@ public static class FindingCodes
 
     /// <summary>ED004: a key is present in the snapshot but not declared in the schema.</summary>
     public const string UndeclaredKey = "ED004";
+
+    /// <summary>ED005: a key's declared pattern cannot be compiled or failed to match within the timeout.</summary>
+    public const string InvalidPattern = "ED005";
 }
