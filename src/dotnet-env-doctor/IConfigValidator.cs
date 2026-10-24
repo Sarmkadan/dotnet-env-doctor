@@ -33,9 +33,30 @@ public sealed record Finding(
 /// <summary>
 /// Result of validating a snapshot against a schema.
 /// </summary>
-/// <param name="Findings">All findings, ordered by severity descending then by key.</param>
-public sealed record ValidationResult(IReadOnlyList<Finding> Findings)
+public sealed record ValidationResult
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ValidationResult"/> record.
+    /// </summary>
+    /// <param name="Findings">All findings, ordered by severity descending then by key.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="Findings"/> is <c>null</c>.</exception>
+    public ValidationResult(IReadOnlyList<Finding> Findings)
+    {
+        ArgumentNullException.ThrowIfNull(Findings);
+        this.Findings = Findings;
+    }
+
+    /// <summary>
+    /// Gets all findings, ordered by severity descending then by key.
+    /// </summary>
+    public IReadOnlyList<Finding> Findings { get; init; }
+
+    /// <summary>
+    /// Deconstructs the result into its findings, preserving the positional record shape.
+    /// </summary>
+    /// <param name="Findings">All findings.</param>
+    public void Deconstruct(out IReadOnlyList<Finding> Findings) => Findings = this.Findings;
+
     /// <summary>
     /// Gets a value indicating whether the result contains no <see cref="Severity.Error"/> findings.
     /// </summary>
@@ -54,6 +75,8 @@ public interface IConfigValidator
     /// <param name="snapshot">Merged configuration values (later sources override earlier ones).</param>
     /// <param name="options">Validation options.</param>
     /// <returns>Findings for missing, mistyped, malformed and undeclared keys.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="schema"/> or <paramref name="snapshot"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentException"><c>schema.Keys</c> or <c>snapshot.Values</c> is <c>null</c>.</exception>
     ValidationResult Validate(IConfigSchema schema, ConfigSnapshot snapshot, ValidationOptions? options = null);
 }
 
@@ -83,10 +106,22 @@ public sealed class ConfigValidator : IConfigValidator
     private readonly RegexPatternRule _patternRule = new();
 
     /// <inheritdoc />
+    /// <exception cref="ArgumentNullException"><paramref name="schema"/> or <paramref name="snapshot"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentException"><c>schema.Keys</c> or <c>snapshot.Values</c> is <c>null</c>.</exception>
     public ValidationResult Validate(IConfigSchema schema, ConfigSnapshot snapshot, ValidationOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(snapshot);
+        if (schema.Keys is null)
+        {
+            throw new ArgumentException("Schema.Keys must not be null.", nameof(schema));
+        }
+
+        if (snapshot.Values is null)
+        {
+            throw new ArgumentException("Snapshot.Values must not be null.", nameof(snapshot));
+        }
+
         options ??= new ValidationOptions();
 
         // Case-insensitive view of the snapshot, matching Microsoft.Extensions.Configuration key semantics.
