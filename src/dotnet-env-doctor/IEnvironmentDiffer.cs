@@ -65,9 +65,70 @@ public interface IEnvironmentDiffer
 /// </summary>
 public sealed class EnvironmentDiffer : IEnvironmentDiffer
 {
+    /// <summary>
+    /// Placeholder written in place of values of keys the schema marks as <see cref="ConfigValueKind.Secret"/>
+    /// or <see cref="ConfigValueKind.ConnectionString"/>.
+    /// </summary>
+    public const string RedactedValue = "***";
+
     /// <inheritdoc />
     public DiffResult Diff(ConfigSnapshot left, ConfigSnapshot right, IConfigSchema? schema = null)
     {
-        throw new NotImplementedException();
+        var leftIndex = Index(left);
+        var rightIndex = Index(right);
+
+        var keys = leftIndex.Keys
+            .Union(rightIndex.Keys, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase);
+
+        var entries = new List<DiffEntry>();
+        foreach (var key in keys)
+        {
+            var inLeft = leftIndex.TryGetValue(key, out var l);
+            var inRight = rightIndex.TryGetValue(key, out var r);
+
+            DiffEntry entry;
+            if (inLeft && inRight)
+            {
+                if (string.Equals(l.Value, r.Value, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                entry = new DiffEntry(l.Key, DiffKind.Changed, l.Value, r.Value);
+            }
+            else if (inLeft)
+            {
+                entry = new DiffEntry(l.Key, DiffKind.OnlyInLeft, l.Value, null);
+            }
+            else
+            {
+                entry = new DiffEntry(r.Key, DiffKind.OnlyInRight, null, r.Value);
+            }
+
+            if (schema is not null && schema.TryGetSpec(key, out var spec) && spec is { Kind: ConfigValueKind.Secret or ConfigValueKind.ConnectionString })
+            {
+                entry = entry with
+                {
+                    LeftValue = entry.LeftValue is null ? null : RedactedValue,
+                    RightValue = entry.RightValue is null ? null : RedactedValue,
+                };
+            }
+
+            entries.Add(entry);
+        }
+
+        return new DiffResult(left.Name, right.Name, entries);
+    }
+
+    private static Dictionary<string, (string Key, string? Value)> Index(ConfigSnapshot snapshot)
+    {
+        var index = new Dictionary<string, (string Key, string? Value)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in snapshot.Values)
+        {
+            index[pair.Key] = (pair.Key, pair.Value);
+        }
+
+        return index;
     }
 }
