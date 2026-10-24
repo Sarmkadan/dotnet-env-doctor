@@ -18,14 +18,14 @@ public static class SecretHeuristics
     /// <param name="value">The configuration value to check.</param>
     /// <param name="placeholderValues">Known placeholder strings.</param>
     /// <returns><c>true</c> when the value is a placeholder.</returns>
-    public static bool IsPlaceholder(string value, IReadOnlyList<string> placeholderValues)
+    public static bool IsPlaceholder(string value, IEnumerable<string> placeholderValues)
     {
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(placeholderValues);
 
-        for (int i = 0; i < placeholderValues.Count; i++)
+        foreach (string placeholder in placeholderValues)
         {
-            if (string.Equals(value, placeholderValues[i], StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(value, placeholder, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -67,14 +67,14 @@ public static class SecretHeuristics
     /// <param name="snapshotName">The snapshot name to test.</param>
     /// <param name="patterns">Glob patterns to match against.</param>
     /// <returns><c>true</c> when at least one pattern matches.</returns>
-    public static bool MatchesAnyPattern(string snapshotName, IReadOnlyList<string> patterns)
+    public static bool MatchesAnyPattern(string snapshotName, IEnumerable<string> patterns)
     {
         ArgumentNullException.ThrowIfNull(snapshotName);
         ArgumentNullException.ThrowIfNull(patterns);
 
-        for (int i = 0; i < patterns.Count; i++)
+        foreach (string pattern in patterns)
         {
-            if (GlobMatch(snapshotName, patterns[i]))
+            if (GlobMatch(snapshotName, pattern))
             {
                 return true;
             }

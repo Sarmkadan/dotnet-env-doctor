@@ -68,6 +68,7 @@ public sealed class SecretDetector : ISecretDetector
     public SecretDetector(SecretDetectorOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
         _options = options;
     }
 
