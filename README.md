@@ -32,21 +32,171 @@ env-doctor diff appsettings.Staging.json appsettings.Production.json
 env-doctor secrets --schema envdoctor.schema.json --json appsettings.json --env
 ```
 
-Using the library directly:
+## Library usage
+
+The CLI is a thin layer over the library. Each example below is a complete top-level program that compiles against `DotnetEnvDoctor` (net8.0) and needs `using DotnetEnvDoctor;`.
+
+Sources are read in override order: the first source is the lowest priority and the last one wins, as in `Microsoft.Extensions.Configuration`.
+
+### Validate
+
+Merge several sources, validate the merged view against the schema and fail on warnings too:
 
 ```csharp
 using DotnetEnvDoctor;
 
-IConfigSchema schema = await new JsonSchemaLoader().LoadAsync("envdoctor.schema.json");
+var schema = await new JsonSchemaLoader().LoadAsync("envdoctor.schema.json");
 
-var snapshot = await new JsonFileConfigSource("appsettings.Production.json").ReadAsync();
-var result = new ConfigValidator().Validate(schema, snapshot);
+var merged = SnapshotMerger.Merge(
+    await new JsonFileConfigSource("appsettings.json").ReadAsync(),
+    await new JsonFileConfigSource("appsettings.Production.json").ReadAsync(),
+    await new EnvironmentConfigSource("MYAPP_").ReadAsync());
+
+var options = new ValidationOptions { TreatWarningsAsErrors = true };
+var result = new ConfigValidator().Validate(schema, merged.Snapshot, options);
 
 foreach (var finding in result.Findings)
     Console.WriteLine($"{finding.Severity} {finding.Code} {finding.Key}: {finding.Message}");
 
-if (!result.IsValid) Environment.Exit(1);
+// Process exit code: 0 when there are no Error findings, 1 otherwise.
+return EnvDoctorRunner.ToExitCode(result);
 ```
+
+`Finding.Source` holds the merged name of all sources. To find the file that supplied a key, look it up in `merged.Origins`.
+
+### Diff
+
+Compare two environments. Passing the schema masks `Secret` and `ConnectionString` values as `***`:
+
+```csharp
+using DotnetEnvDoctor;
+
+var schema = await new JsonSchemaLoader().LoadAsync("envdoctor.schema.json");
+
+var staging = await new JsonFileConfigSource("appsettings.Staging.json").ReadAsync();
+var production = await new JsonFileConfigSource("appsettings.Production.json").ReadAsync();
+
+var diff = new EnvironmentDiffer().Diff(staging, production, schema);
+
+Console.WriteLine($"{diff.LeftName} vs {diff.RightName}");
+
+foreach (var entry in diff.Entries)
+{
+    var line = entry.Kind switch
+    {
+        DiffKind.OnlyInLeft => $"- {entry.Key} = {entry.LeftValue}",
+        DiffKind.OnlyInRight => $"+ {entry.Key} = {entry.RightValue}",
+        DiffKind.Changed => $"~ {entry.Key}: {entry.LeftValue} -> {entry.RightValue}",
+        _ => entry.Kind.ToString(),
+    };
+
+    Console.WriteLine(line);
+}
+```
+
+### Secrets
+
+Scan for missing, placeholder and leaked secrets. Assigning a list property replaces its default, so copy any default entries you want to keep. `.env` is not in the default `CommittedFilePatterns`, so the pattern is added here on purpose:
+
+```csharp
+using DotnetEnvDoctor;
+
+var schema = await new JsonSchemaLoader().LoadAsync("envdoctor.schema.json");
+
+var secretOptions = new SecretDetectorOptions
+{
+    PlaceholderValues = new List<string> { "CHANGEME", "REPLACE_ME", "your-api-key" },
+    CommittedFilePatterns = new List<string> { "appsettings.json", "appsettings.*.json", "*.env", "*.env.example" },
+};
+
+var detector = new SecretDetector(secretOptions);
+
+var issues = detector.Scan(schema, new List<ConfigSnapshot>
+{
+    await new JsonFileConfigSource("appsettings.json").ReadAsync(),
+    await new DotEnvFileConfigSource(".env").ReadAsync(),
+    await new EnvironmentConfigSource("MYAPP_").ReadAsync(),
+});
+
+foreach (var issue in issues)
+{
+    var label = issue.Kind switch
+    {
+        SecretIssueKind.MissingSecret => "missing",
+        SecretIssueKind.PlaceholderValue => "placeholder",
+        SecretIssueKind.SecretInCommittedFile => "committed",
+        SecretIssueKind.UndeclaredSecretLike => "undeclared",
+        _ => issue.Kind.ToString(),
+    };
+
+    Console.WriteLine($"[{label}] {issue.Key} ({issue.Source ?? "no source"}): {issue.Message}");
+}
+
+// Exit code: 0 for no issues, 2 when every issue is UndeclaredSecretLike (warning), 1 otherwise.
+return EnvDoctorRunner.ToExitCode(issues);
+```
+
+### Dependency injection
+
+`AddEnvDoctor` registers the services as singletons and binds `EnvDoctorOptions`. `BuildServiceProvider` comes from the `Microsoft.Extensions.DependencyInjection` package, which the library does not reference. Console apps need to add it (`dotnet add package Microsoft.Extensions.DependencyInjection`). ASP.NET Core apps already include it.
+
+```csharp
+using DotnetEnvDoctor;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+
+var services = new ServiceCollection();
+services.AddEnvDoctor(o => o.SchemaPath = "envdoctor.schema.json");
+
+using var provider = services.BuildServiceProvider();
+
+var runner = provider.GetRequiredService<EnvDoctorRunner>();
+var schemaPath = provider.GetRequiredService<IOptions<EnvDoctorOptions>>().Value.SchemaPath
+    ?? throw new InvalidOperationException("SchemaPath is not configured.");
+
+var result = await runner.ValidateAsync(schemaPath, new IConfigSource[]
+{
+    new JsonFileConfigSource("appsettings.json"),
+    new EnvironmentConfigSource("MYAPP_"),
+});
+
+return EnvDoctorRunner.ToExitCode(result);
+```
+
+`EnvDoctorRunner` does not read `SchemaPath` itself. Pass the path to each call.
+
+### JSON output for CI
+
+`JsonReportWriter.Write` returns a JSON document that starts with `"schemaVersion"`. Its shape is stable across releases, so CI scripts can parse it:
+
+```csharp
+using DotnetEnvDoctor;
+
+var schema = await new JsonSchemaLoader().LoadAsync("envdoctor.schema.json");
+
+var merged = SnapshotMerger.Merge(
+    await new JsonFileConfigSource("appsettings.json").ReadAsync(),
+    await new EnvironmentConfigSource("MYAPP_").ReadAsync());
+
+var result = new ConfigValidator().Validate(schema, merged.Snapshot);
+
+// Writes { "schemaVersion", "isValid", "findings": [...] } to stdout. Pass indented: false for compact output.
+Console.WriteLine(JsonReportWriter.Write(result));
+
+return EnvDoctorRunner.ToExitCode(result);
+```
+
+`JsonReportWriter.Write` also has overloads for `DiffResult` and for the secret issues list.
+
+## Secret handling
+
+dotnet-env-doctor is built so that secret values do not leave the process through its output:
+
+- **Findings never contain values.** Finding messages are fixed text. `ED002` says what kind was expected, and `ED003` names the schema pattern. Neither echoes the value.
+- **Secret issues never contain values.** `SecretIssue.Message` is fixed text, and `Source` is a source name.
+- **Diffs mask `Secret` and `ConnectionString` values as `***`.** Redaction happens only when you pass the schema to `EnvironmentDiffer.Diff` or `EnvDoctorRunner.DiffAsync`. Without a schema nothing is masked. Keys the schema does not declare are never masked. Null and empty values are left as they are.
+- **JSON diff output inherits that redaction.** `JsonReportWriter.Write(DiffResult)` writes the values the differ returned, so it is masked only when the diff was built with a schema.
+- **`.env` is not treated as committed by default.** `SecretDetectorOptions.CommittedFilePatterns` defaults to `appsettings.json`, `appsettings.*.json` and `*.env.example`. A real secret in a `.env` file is not reported as `SecretInCommittedFile`. Add `*.env` to the list if your team commits `.env` files.
 
 ## Schema file format
 
@@ -147,10 +297,16 @@ dotnet add package DotnetEnvDoctor
 |------|---------|
 | `IConfigSchema` / `ConfigKeySpec` | Declares expected keys, value kinds, required flags and patterns |
 | `IConfigSchemaLoader` | Loads a schema from JSON/YAML |
-| `IConfigSource` (`JsonFileConfigSource`, `EnvironmentConfigSource`) | Reads a source into a flat `ConfigSnapshot` |
-| `IConfigValidator` / `ValidationResult` / `Finding` | Validates a snapshot against a schema |
-| `IEnvironmentDiffer` / `DiffResult` | Diffs two snapshots with secret redaction |
-| `ISecretDetector` / `SecretIssue` | Finds missing, placeholder and leaked secrets |
+| `IConfigSource` (`JsonFileConfigSource`, `EnvironmentConfigSource`, `DotEnvFileConfigSource`) | Reads a source into a flat `ConfigSnapshot` |
+| `SnapshotMerger` / `MergedSnapshot` | Merges snapshots with `Microsoft.Extensions.Configuration` override rules and records the origin of each key |
+| `IConfigValidator` / `ValidationResult` / `Finding` / `ValidationOptions` | Validates a snapshot against a schema |
+| `IEnvironmentDiffer` / `DiffResult` / `DiffEntry` | Diffs two snapshots with secret redaction |
+| `SecretRedactor` | Masks `Secret` and `ConnectionString` values as `***` |
+| `ISecretDetector` / `SecretDetector` / `SecretDetectorOptions` / `SecretIssue` | Finds missing, placeholder and leaked secrets |
+| `SecretHeuristics` | Placeholder, entropy and known-token checks, plus the glob matching used for committed files |
+| `JsonReportWriter` | Serialises validation, diff and secret results as JSON for CI |
+| `EnvDoctorRunner` | Facade that loads a schema, reads sources and runs validation, diff and secret scans, with exit-code helpers |
+| `ServiceCollectionExtensions` (`AddEnvDoctor`) | Registers the services with dependency injection and binds `EnvDoctorOptions` |
 
 ## Finding codes
 
