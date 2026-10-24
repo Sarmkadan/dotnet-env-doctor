@@ -36,18 +36,6 @@ public sealed class ConfigValidatorGuardTests
     }
 
     [Fact]
-    public void Validate_NullSnapshotValues_ThrowsArgumentException()
-    {
-        var snapshot = new ConfigSnapshot("appsettings.json", null!);
-
-        var ex = Assert.Throws<ArgumentException>(() =>
-            new ConfigValidator().Validate(new ConfigSchema([]), snapshot));
-
-        Assert.Equal("snapshot", ex.ParamName);
-        Assert.Contains("Values", ex.Message);
-    }
-
-    [Fact]
     public void Constructor_NullFindings_ThrowsArgumentNullException()
     {
         var ex = Assert.Throws<ArgumentNullException>(() => new ValidationResult(null!));

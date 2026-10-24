@@ -8,11 +8,49 @@ namespace DotnetEnvDoctor;
 /// A flattened snapshot of configuration values from one source
 /// (an <c>appsettings*.json</c> file, the process environment, a <c>.env</c> file, ...).
 /// </summary>
-/// <param name="Name">Display name of the source, e.g. <c>appsettings.Production.json</c>.</param>
-/// <param name="Values">Flattened key/value pairs. Keys use the colon-separated configuration path form.</param>
-public sealed record ConfigSnapshot(
-    string Name,
-    IReadOnlyDictionary<string, string?> Values);
+public sealed record ConfigSnapshot
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ConfigSnapshot"/> record.
+    /// </summary>
+    /// <param name="Name">Display name of the source, e.g. <c>appsettings.Production.json</c>.</param>
+    /// <param name="Values">Flattened key/value pairs. Keys use the colon-separated configuration path form.</param>
+    /// <exception cref="ArgumentException"><paramref name="Name"/> is <c>null</c>, empty or white-space.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="Values"/> is <c>null</c>.</exception>
+    public ConfigSnapshot(string Name, IReadOnlyDictionary<string, string?> Values)
+    {
+        if (string.IsNullOrWhiteSpace(Name))
+        {
+            throw new ArgumentException("Snapshot name must not be null, empty or white-space.", nameof(Name));
+        }
+
+        ArgumentNullException.ThrowIfNull(Values);
+
+        this.Name = Name;
+        this.Values = Values;
+    }
+
+    /// <summary>
+    /// Gets the display name of the source, e.g. <c>appsettings.Production.json</c>.
+    /// </summary>
+    public string Name { get; init; }
+
+    /// <summary>
+    /// Gets the flattened key/value pairs. Keys use the colon-separated configuration path form.
+    /// </summary>
+    public IReadOnlyDictionary<string, string?> Values { get; init; }
+
+    /// <summary>
+    /// Deconstructs the snapshot into its name and values, preserving the positional record shape.
+    /// </summary>
+    /// <param name="Name">Display name of the source.</param>
+    /// <param name="Values">Flattened key/value pairs.</param>
+    public void Deconstruct(out string Name, out IReadOnlyDictionary<string, string?> Values)
+    {
+        Name = this.Name;
+        Values = this.Values;
+    }
+}
 
 /// <summary>
 /// Reads configuration from a concrete location into a flat <see cref="ConfigSnapshot"/>.

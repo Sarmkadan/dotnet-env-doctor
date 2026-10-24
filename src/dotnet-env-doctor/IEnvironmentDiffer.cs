@@ -31,14 +31,52 @@ public sealed record DiffEntry(
 /// <summary>
 /// Result of diffing two snapshots.
 /// </summary>
-/// <param name="LeftName">Name of the left snapshot.</param>
-/// <param name="RightName">Name of the right snapshot.</param>
-/// <param name="Entries">Differences ordered by key.</param>
-public sealed record DiffResult(
-    string LeftName,
-    string RightName,
-    IReadOnlyList<DiffEntry> Entries)
+public sealed record DiffResult
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DiffResult"/> record.
+    /// </summary>
+    /// <param name="LeftName">Name of the left snapshot.</param>
+    /// <param name="RightName">Name of the right snapshot.</param>
+    /// <param name="Entries">Differences ordered by key.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="Entries"/> is <c>null</c>.</exception>
+    public DiffResult(string LeftName, string RightName, IReadOnlyList<DiffEntry> Entries)
+    {
+        ArgumentNullException.ThrowIfNull(Entries);
+
+        this.LeftName = LeftName;
+        this.RightName = RightName;
+        this.Entries = Entries;
+    }
+
+    /// <summary>
+    /// Gets the name of the left snapshot.
+    /// </summary>
+    public string LeftName { get; init; }
+
+    /// <summary>
+    /// Gets the name of the right snapshot.
+    /// </summary>
+    public string RightName { get; init; }
+
+    /// <summary>
+    /// Gets the differences ordered by key.
+    /// </summary>
+    public IReadOnlyList<DiffEntry> Entries { get; init; }
+
+    /// <summary>
+    /// Deconstructs the result into its parts, preserving the positional record shape.
+    /// </summary>
+    /// <param name="LeftName">Name of the left snapshot.</param>
+    /// <param name="RightName">Name of the right snapshot.</param>
+    /// <param name="Entries">Differences ordered by key.</param>
+    public void Deconstruct(out string LeftName, out string RightName, out IReadOnlyList<DiffEntry> Entries)
+    {
+        LeftName = this.LeftName;
+        RightName = this.RightName;
+        Entries = this.Entries;
+    }
+
     /// <summary>
     /// Gets a value indicating whether the two snapshots are identical.
     /// </summary>
@@ -72,8 +110,23 @@ public sealed class EnvironmentDiffer : IEnvironmentDiffer
     public const string RedactedValue = SecretRedactor.Mask;
 
     /// <inheritdoc />
+    /// <exception cref="ArgumentNullException"><paramref name="left"/> or <paramref name="right"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="left"/> or <paramref name="right"/> has a <c>null</c> <see cref="ConfigSnapshot.Values"/> dictionary.</exception>
     public DiffResult Diff(ConfigSnapshot left, ConfigSnapshot right, IConfigSchema? schema = null)
     {
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+
+        if (left.Values is null)
+        {
+            throw new ArgumentException("Left snapshot values must not be null.", nameof(left));
+        }
+
+        if (right.Values is null)
+        {
+            throw new ArgumentException("Right snapshot values must not be null.", nameof(right));
+        }
+
         var leftIndex = Index(left);
         var rightIndex = Index(right);
 
