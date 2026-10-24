@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text.Json;
+
 namespace DotnetEnvDoctor;
 
 /// <summary>
@@ -48,9 +51,85 @@ public sealed class JsonFileConfigSource : IConfigSource
     public string Name => Path.GetFileName(_path);
 
     /// <inheritdoc />
-    public Task<ConfigSnapshot> ReadAsync(CancellationToken cancellationToken = default)
+    /// <exception cref="FileNotFoundException">The file does not exist.</exception>
+    /// <exception cref="FormatException">The file is not valid JSON or its root value is not an object.</exception>
+    /// <exception cref="OperationCanceledException">The operation was cancelled.</exception>
+    public async Task<ConfigSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        if (!File.Exists(_path))
+        {
+            throw new FileNotFoundException($"Configuration file not found: '{_path}'.", _path);
+        }
+
+        var options = new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        };
+
+        JsonDocument document;
+        await using (var stream = File.OpenRead(_path))
+        {
+            try
+            {
+                document = await JsonDocument.ParseAsync(stream, options, cancellationToken);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException($"Configuration file '{_path}' is not valid JSON: {ex.Message}", ex);
+            }
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException($"Configuration file '{_path}' is invalid: the root value must be a JSON object.");
+            }
+
+            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            Flatten(root, string.Empty, values);
+            return new ConfigSnapshot(Name, values);
+        }
+    }
+
+    private static void Flatten(JsonElement element, string prefix, Dictionary<string, string?> target)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    Flatten(property.Value, prefix.Length == 0 ? property.Name : $"{prefix}:{property.Name}", target);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    var key = prefix.Length == 0 ? index.ToString(CultureInfo.InvariantCulture) : $"{prefix}:{index.ToString(CultureInfo.InvariantCulture)}";
+                    Flatten(item, key, target);
+                    index++;
+                }
+
+                break;
+
+            case JsonValueKind.Null:
+                target[prefix] = null;
+                break;
+
+            case JsonValueKind.String:
+                target[prefix] = element.GetString();
+                break;
+
+            default:
+                // Numbers and booleans keep their literal JSON form (e.g. "42", "true").
+                target[prefix] = element.GetRawText();
+                break;
+        }
     }
 }
 
