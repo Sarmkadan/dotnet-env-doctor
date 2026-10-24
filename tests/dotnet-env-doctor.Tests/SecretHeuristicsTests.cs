@@ -17,6 +17,24 @@ public sealed class SecretHeuristicsTests
     }
 
     [Fact]
+    public void ShannonEntropy_AllSameChar_Zero()
+    {
+        Assert.Equal(0, SecretHeuristics.ShannonEntropy("zzzzzzzzzzzz"));
+    }
+
+    [Fact]
+    public void ShannonEntropy_FourDistinctEqual_Two()
+    {
+        Assert.Equal(2.0, SecretHeuristics.ShannonEntropy("abcd"), precision: 10);
+    }
+
+    [Fact]
+    public void MatchesGlob_AppsettingsStar_MatchesProduction()
+    {
+        Assert.True(SecretHeuristics.MatchesGlob("appsettings.Production.json", "appsettings.*.json"));
+    }
+
+    [Fact]
     public void ShannonEntropy_RepeatedCharacter_ReturnsZero()
     {
         Assert.Equal(0, SecretHeuristics.ShannonEntropy("aaaaaaaa"));
